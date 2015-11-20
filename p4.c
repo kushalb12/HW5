@@ -23,7 +23,7 @@ char ipAddr[16], hostName[32];
 int sendOk=0, rcvdOk=0;
 
 
-int getHostIP(){
+int get_host_IP(){
 	int res = 0, i = 0;
 	//Host Name
 	gethostname(hostName, 32);
@@ -50,6 +50,7 @@ int getHostIP(){
 }
 
 //Create UDP server
+//TODO: Check the return value for fail
 int create_server() {
 
 	int res=0;
@@ -67,36 +68,35 @@ int create_server() {
 	setsockopt(servSock, SOL_SOCKET, SO_REUSEADDR, (const void *)&opt, sizeof(opt));
 
 	//Retreive host IP address
-	res = getHostIP();
+	res = get_host_IP();
 
-/*	//Configure sockaddr_in structure
+	//Build server address structure
+	bzero((char *)&servAddr, sizeof(servAddr));
 	servAddr.sin_family = AF_INET;
+	//servAddr.sin_addr = inet_aton(ipAddr);
+	inet_aton(ipAddr, &(servAddr.sin_addr));
 	servAddr.sin_port = 0;
-	//hostName = get_host_IP();
-	//servAddr.sin_addr.s_addr = INADDR_ANY;  //this gets the IP address of the machine on which the server is running
-	servAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
-	memset(servAddr.sin_zero, '\0', sizeof(servAddr.sin_zero));
-	//Bind the socket with the address structure
+
+	//Bind the server
 	if (bind(servSock, (struct sockaddr*) &servAddr, sizeof(servAddr)) < 0){
 		error("Error encountered while binding socket to server address");
 		res = -1;
 	}
 
-	//Get the IP address and port of server
-	//TODO:check the return value for fail
+	//Get port number of server
 	struct sockaddr_in sin;
 	socklen_t len = sizeof(sin);
 	getsockname(servSock, (struct sockaddr*) &sin, &len);
-	ipAddr = inet_ntoa(sin.sin_addr);
 	portNum = (int) ntohs(sin.sin_port);
-
-    //server listens for connection from client
-    listen(servSock, 5);			//the number of connections that can be waiting while the process is handling a particular connection
-
-	printf("My ip:%s, port:%d\n", ipAddr, portNum);
-	fflush(stdout);*/
+	printf("Port no:%d\n", portNum);
 
 	return res;
+}
+
+void append_ip_rec(){
+
+
+
 }
 
 void* server_thread(void * arg){
@@ -106,11 +106,23 @@ void* server_thread(void * arg){
 	int res = create_server();
 
 	//Create endpoints file if not there
+	FILE *endpts = fopen("endpoints", "rb");
+	if(NULL == endpts){
+		printf("endpoints doesn't exist\n");
+		//Create file
+		endpts = fopen("endpoints", "wb");
+		if(NULL == endpts){
+			error("File creation failed");
+		}
+		fclose(endpts);
+	}
+
+
 
 	//See if I am the last process,
 	//If yes, read N-1 lines from endpoints file, set sendOk flag
-
 	//Append IP and port num to endpoints file
+	append_ip_rec();
 
 	//If sendOk not set, wait to receive 'OK' message
 
