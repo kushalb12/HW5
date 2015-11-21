@@ -21,6 +21,13 @@
 #include <sys/unistd.h>
 #include <netdb.h>
 
+#define BUFSIZE 1024
+
+void debug(char *s){
+	write(1, s, strlen(s));
+	fflush(stdout);
+}
+char print_buf[1000];
 int N=2, b, c, F, B, P, S;
 int servSock, cliSock, myPort, myIdx, endptsLock;
 char myIP[16];
@@ -79,12 +86,15 @@ int create_server() {
 	//Build server address structure
 	bzero((char *)&servAddr, sizeof(servAddr));
 	servAddr.sin_family = AF_INET;
-	//servAddr.sin_addr = inet_aton(ipAddr);
-	inet_aton(myIP, &(servAddr.sin_addr));
+	servAddr.sin_addr.s_addr = INADDR_ANY;
+	// inet_aton(myIP, &(servAddr.sin_addr));
 	servAddr.sin_port = 0;
 
 	//Bind the server
-	if (bind(servSock, (struct sockaddr*) &servAddr, sizeof(servAddr)) < 0){
+	int temp = bind(servSock, (struct sockaddr*) &servAddr, sizeof(servAddr));
+	sprintf(print_buf,"%d\n", temp);
+	debug(print_buf);
+	if ( temp < 0){
 		error("Error encountered while binding socket to server address");
 		res = -1;
 	}
@@ -196,15 +206,29 @@ int send_ok(int node_idx){
 
 	int res=0;
 	struct sockaddr_in nodeServAddr;
+	struct sockaddr_in nodeClientAddr;
 	//Create socket
 	cliSock = socket(AF_INET, SOCK_DGRAM, 0);
+	nodeClientAddr.sin_family = AF_INET;
+	inet_aton(myIP, &(nodeClientAddr.sin_addr));
+	nodeClientAddr.sin_port = 0;
+
+	int temp = bind(cliSock, (struct sockaddr*) &nodeClientAddr, sizeof(nodeClientAddr));
+	sprintf(print_buf,"bind : %d\n", temp);
+	debug(print_buf);
+	if ( temp < 0){
+		error("Error encountered while binding socket to server address");
+		res = -1;
+	}
+
 	if(cliSock < 0){ res = -1; }
 
 	//Build node's UDP server address structure
 	bzero((char *)&nodeServAddr, sizeof(nodeServAddr));
 	nodeServAddr.sin_family = AF_INET;
+	// nodeServAddr.sin_addr.s_addr = INADDR_ANY;
 	inet_aton(nodeList[node_idx].ip, &(nodeServAddr.sin_addr));
-	nodeServAddr.sin_port = nodeList[node_idx].port;
+	nodeServAddr.sin_port = htons(nodeList[node_idx].port);
 
 	//Connect to the node's UDP server
 	//if(connect(cliSock, (struct sockaddr*) &nodeServAddr, sizeof(nodeServAddr)) < 0){ res = -1;}
@@ -214,13 +238,15 @@ int send_ok(int node_idx){
 	char msg[10];
 	socklen_t nodeServLen = sizeof(nodeServAddr);
 	bzero(msg, 10);
-	sprintf(msg, "OK\n");
-	res = sendto(cliSock, msg, 3, 0, (struct sockaddr *)&nodeServAddr, nodeServLen);
-	printf("sendto ret:%d\n", res);
+	sprintf(msg, "OK");
+	
+	res = sendto(cliSock, msg, strlen(msg), 0, &nodeServAddr, sizeof(nodeServAddr));
+	
+	printf("sendto ret:%d %s \n", res, inet_ntoa(nodeServAddr.sin_addr));
 	if(-1 == res){error("Error sending OK");}
 
 	//Wait for node server echo
-	res = recvfrom(cliSock, msg, 3, 0, (struct sockaddr *)&nodeServAddr, &nodeServLen);
+	res = recvfrom(cliSock, msg, sizeof(msg), 0, (struct sockaddr *)&nodeServAddr, &nodeServLen);
 	printf("recvfrom ret:%d\n", res);
 	if(-1 == res){error("Error receiving OK");}
 
@@ -261,20 +287,26 @@ void* server_thread(void * arg){
 		struct sockaddr_in clAddr;
 		socklen_t clientLen = sizeof(clAddr);
 		while(1){
-			printf("Waiting to get OK message\n");
-			res = recvfrom(servSock, buf, 10, 0, (struct sockaddr *)&clAddr, &clientLen);
+			debug("Waiting to get OK message\n");
 
+			bzero(buf, BUFSIZE);
+
+			res = recvfrom(servSock, buf, BUFSIZE, 0, (struct sockaddr *) &clAddr, &clientLen);
+			sprintf(print_buf, "res: %d\n", res);
+			debug(print_buf);
 			//send echo
 			res = sendto(servSock, buf, res, 0, (struct sockaddr *)&clAddr, clientLen);
-			printf("sendto ret:%d\n", res);
+			sprintf(print_buf, "sendto ret:%d\n", res);
+			debug(print_buf);
 			if(-1 == res){error("Error sending OK");}
 			//Check for null terminator in the message
 			if(0 != buf[res])
 				buf[res] = 0;
-			printf("Received:%s from %s, port:%d \n", buf, inet_ntoa(clAddr.sin_addr), clAddr.sin_port);
-
+			sprintf(print_buf, "Received:%s from %s, port:%d \n", buf, inet_ntoa(clAddr.sin_addr), clAddr.sin_port);
+			debug(print_buf);
 			if( 0 == strcmp("OK", buf)){
-				printf("Received OK message from %s\n",inet_ntoa(clAddr.sin_addr));
+				sprintf(print_buf, "Received OK message from %s\n",inet_ntoa(clAddr.sin_addr));
+				debug(print_buf);
 				//Set rcvdOK flag
 				rcvdOk = 1;
 				break;
