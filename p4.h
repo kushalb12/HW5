@@ -10,7 +10,7 @@
 
 
 typedef struct ipRec{
-	int index;
+	int idx;
 	char ip[16];
 	int port;
 }ipRec;
