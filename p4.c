@@ -4,13 +4,16 @@
  *  Created on: 17-Nov-2015
  *      Author: Kushal
  */
+#include "p4.h"
 
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
+#include <unistd.h>
 
 #include <pthread.h>
 
+#include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <netinet/in.h>
@@ -18,13 +21,16 @@
 #include <sys/unistd.h>
 #include <netdb.h>
 
-int servSock, portNum;
-char ipAddr[16], hostName[32];
+int N=2, b, c, F, B, P, S;
+int servSock, cliSock, myPort, myIdx, endptsLock;
+char myIP[16];
+ipRec nodeList[100];
 int sendOk=0, rcvdOk=0;
-
+FILE *endpts = NULL;
 
 int get_host_IP(){
 	int res = 0, i = 0;
+	char hostName[32];
 	//Host Name
 	gethostname(hostName, 32);
 
@@ -41,8 +47,8 @@ int get_host_IP(){
 		if(0 == strcmp("127.0.0.1", inet_ntoa(*addr_list[i])))
 			continue;
 		else{
-			strcpy(ipAddr, inet_ntoa(*addr_list[i]));
-			printf("IP Addr:%s\n", ipAddr);
+			strcpy(myIP, inet_ntoa(*addr_list[i]));
+			printf("IP Addr:%s\n", myIP);
 			break;
 		}
 	}
@@ -74,7 +80,7 @@ int create_server() {
 	bzero((char *)&servAddr, sizeof(servAddr));
 	servAddr.sin_family = AF_INET;
 	//servAddr.sin_addr = inet_aton(ipAddr);
-	inet_aton(ipAddr, &(servAddr.sin_addr));
+	inet_aton(myIP, &(servAddr.sin_addr));
 	servAddr.sin_port = 0;
 
 	//Bind the server
@@ -87,74 +93,231 @@ int create_server() {
 	struct sockaddr_in sin;
 	socklen_t len = sizeof(sin);
 	getsockname(servSock, (struct sockaddr*) &sin, &len);
-	portNum = (int) ntohs(sin.sin_port);
-	printf("Port no:%d\n", portNum);
+	myPort = (int) ntohs(sin.sin_port);
+	printf("Port no:%d\n", myPort);
 
 	return res;
 }
 
+//Get my index to be stored in the endpoints file
+int get_index() {
+	int idx;
+	ipRec lastRec;
+	//Go to the end of file
+	fseek(endpts, 0, SEEK_END);
+	//Get the index for this ip record
+	printf("ftell:%d\n", ftell(endpts));
+	if (0 == ftell(endpts)) {
+		idx = 0;
+		printf("idx is zero\n");
+	} else {
+		fseek(endpts, -(sizeof(ipRec)), SEEK_END);
+		printf("pos:%d\n", ftell(endpts));
+		fread(&lastRec, sizeof(lastRec), 1, endpts);
+		printf("lastRec:%d, %s, %d\n", lastRec.idx, lastRec.ip, lastRec.port);
+		idx = lastRec.idx + 1;
+	}
+
+	//Move to end again
+	fseek(endpts, 0, SEEK_END);
+	return idx;
+}
+
+//Append new ip record
 void append_ip_rec(){
 
+	//Get an exclusive lock on the file
+	int res = 0;
+	ipRec myRec;
+	endpts = fopen("endpoints", "a+");
+	if(NULL == endpts){
+		res = -1;
+	}
 
+	//Get an advisory exclusive lock on file
+	while(0 != flock(endptsLock, LOCK_EX|LOCK_NB)){
+		usleep(1000);
+	}
 
+	printf("Got the lock\n");
+	fflush(stdout);
+	//Append new ip record
+	myIdx = get_index();
+	myRec.idx = myIdx;
+	strcpy(myRec.ip, myIP);
+	myRec.port = myPort;
+
+	printf("myRec:%d, %s, %d\n", myRec.idx, myRec.ip, myRec.port);
+	fwrite(&myRec, sizeof(ipRec), 1, endpts);
+
+	//Release the lock
+	flock(endptsLock, LOCK_UN);
+	//Close the file
+	fclose(endpts);
+}
+
+int file_exists(char *file){
+	struct stat temp;
+	int res = 0;
+	res = (0 == stat(file, &temp));
+	return res;
+}
+
+void read_IP_recs(){
+	endpts = fopen("endpoints", "r");
+	if(NULL == endpts){
+		error("File creation failed");
+	}
+
+	//Get an advisory shared lock on file
+	while(0 != flock(endptsLock, LOCK_SH|LOCK_NB)){
+		usleep(1000);
+	}
+
+	//Read all the IP records one by one
+	ipRec temp;
+	int ctr=0;
+	while(NULL != endpts && (ctr < N)){
+		fread(&temp, sizeof(temp), 1, endpts);
+		printf("temp:%d, %s, %d\n", temp.idx, temp.ip, temp.port);
+		if(ctr != myIdx){ //Skip my own IP record
+			nodeList[ctr] = temp;
+		}
+		ctr++;
+	}
+
+	//Release the lock
+	flock(endptsLock, LOCK_UN);
+	//Close the file
+	fclose(endpts);
+}
+
+int send_ok(int node_idx){
+
+	int res=0;
+	struct sockaddr_in nodeServAddr;
+	//Create socket
+	cliSock = socket(AF_INET, SOCK_DGRAM, 0);
+	if(cliSock < 0){ res = -1; }
+
+	//Build node's UDP server address structure
+	bzero((char *)&nodeServAddr, sizeof(nodeServAddr));
+	nodeServAddr.sin_family = AF_INET;
+	inet_aton(nodeList[node_idx].ip, &(nodeServAddr.sin_addr));
+	nodeServAddr.sin_port = nodeList[node_idx].port;
+
+	//Connect to the node's UDP server
+	//if(connect(cliSock, (struct sockaddr*) &nodeServAddr, sizeof(nodeServAddr)) < 0){ res = -1;}
+
+	//Send 'OK' message
+	printf("Sending OK to %s, port:%d\n",nodeList[node_idx].ip, nodeList[node_idx].port);
+	char msg[10];
+	socklen_t nodeServLen = sizeof(nodeServAddr);
+	bzero(msg, 10);
+	sprintf(msg, "OK\n");
+	res = sendto(cliSock, msg, 3, 0, (struct sockaddr *)&nodeServAddr, nodeServLen);
+	printf("sendto ret:%d\n", res);
+	if(-1 == res){error("Error sending OK");}
+
+	//Wait for node server echo
+	res = recvfrom(cliSock, msg, 3, 0, (struct sockaddr *)&nodeServAddr, &nodeServLen);
+	printf("recvfrom ret:%d\n", res);
+	if(-1 == res){error("Error receiving OK");}
+
+	while(1);
+	//close socket
+	close(cliSock);
 }
 
 void* server_thread(void * arg){
 
-
+	int res = 0;
 	//Create UDP server
-	int res = create_server();
+	res = create_server();
 
-	//Create endpoints file if not there
-	FILE *endpts = fopen("endpoints", "rb");
-	if(NULL == endpts){
-		printf("endpoints doesn't exist\n");
+	//Create endpoints file if not there already
+	if(0 == file_exists("endpoints")){
 		//Create file
-		endpts = fopen("endpoints", "wb");
+		endpts = fopen("endpoints", "w");
 		if(NULL == endpts){
 			error("File creation failed");
 		}
 		fclose(endpts);
 	}
 
-
-
-	//See if I am the last process,
-	//If yes, read N-1 lines from endpoints file, set sendOk flag
 	//Append IP and port num to endpoints file
 	append_ip_rec();
 
-	//If sendOk not set, wait to receive 'OK' message
+	//See if I am the last process,
+	//If yes, read N-1 lines from endpoints file, set sendOk flag
+	if(N-1 == myIdx){
+		//I am the last process, read N-1 IP records from 'endpoints' file
+		read_IP_recs();
+		//set sendOk flag
+		sendOk = 1;
+	}
+	else{ //wait to receive 'OK' message
+		char buf[10];
+		struct sockaddr_in clAddr;
+		socklen_t clientLen = sizeof(clAddr);
+		while(1){
+			printf("Waiting to get OK message\n");
+			res = recvfrom(servSock, buf, 10, 0, (struct sockaddr *)&clAddr, &clientLen);
 
+			//send echo
+			res = sendto(servSock, buf, res, 0, (struct sockaddr *)&clAddr, clientLen);
+			printf("sendto ret:%d\n", res);
+			if(-1 == res){error("Error sending OK");}
+			//Check for null terminator in the message
+			if(0 != buf[res])
+				buf[res] = 0;
+			printf("Received:%s from %s, port:%d \n", buf, inet_ntoa(clAddr.sin_addr), clAddr.sin_port);
 
+			if( 0 == strcmp("OK", buf)){
+				printf("Received OK message from %s\n",inet_ntoa(clAddr.sin_addr));
+				//Set rcvdOK flag
+				rcvdOk = 1;
+				break;
+			}
+		}
+	}
+
+	//TODO:Listen for heart beat messages
+	while(1);
 
 	//close the socket
 	close(servSock);
 }
 
+
+
 int main(int argc, char *argv[]){
-
-/*	if(argc != 3){
-		//Invalid number of args
-		printf("No of args NOT 3"); 		exit(1);
-	}*/
-
-	int N, b, c, F, B, P, S;
 
 /*	N = atoi(argv[1]); 	b = atoi(argv[2]); 	c = atoi(argv[3]); 	F = atoi(argv[4]); 	B = atoi(argv[5]);
 	P = atoi(argv[6]); 	S = atoi(argv[7]);*/
-
+	int res = 0;
 	//Create server thread
 	pthread_t servThread;
 	pthread_create(&servThread, NULL, server_thread, NULL);
 
-	//Wait for sendOk/rcvdOk to be set
+	//Wait for either of sendOk/rcvdOk to be set
+	while(!sendOk &&  !rcvdOk);
 
-	//If sendOk, send 'OK' to all other nodes
+	if(sendOk){//If sendOk, send 'OK' to all other nodes
+		printf("sendOk is set\n");
+		//Loop through the nodeList, send 'OK' to each node
+		int node_idx = 0;
+		for(node_idx=0; node_idx<N-1; node_idx++){
+			res = send_ok(node_idx);
+		}
+	}
+	else{//If rcvdOk, read endpoints file
+		printf("rcvdOk is set\n");
+		//Read IP records from 'endpoints' file
+		read_IP_recs();
+	}
 
-	//If rcvdOk, read endpoints file
-
-	sleep(1);
-	//pthread_join(&servThread, NULL);
+	pthread_join(servThread, NULL);
+	while(1);
 	printf("Done\n");
 }
