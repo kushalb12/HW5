@@ -5,19 +5,22 @@
  *      Author: Kushal
  */
 #include <stdio.h>
+#include <stdint.h>
 #include <pthread.h>
 
 #ifndef P4_H_
 #define P4_H_
 
 char print_buf[1000];
-int b, c, F, B, P, SS;
+int b, c, F, B, P, S, S2, T;
 int N;
 int servSock, cliSock, myPort, myIdx, endptsLock;
-int sendOk, rcvdOk, ltime, seed, failFlag, stopFlag;
-int local_nbrs[100][2], localNbrsLen, sendList[100][2], sendListLen;
+int sendOk, rcvdOk, ltime, failFlag, stopFlag;
+int localNbrs[100], failedNodes[100];
+uint32_t nodeHBTable[100][2];
+int localNbrsLen, nodeHBTableLen, failedNodesCtr, HBCtr;
 char myIP[16];
-pthread_mutex_t sendListMutex;
+pthread_mutex_t nodeHBTableMutex;
 FILE *endpts;
 
 void* server_thread(void * arg);
@@ -32,4 +35,3 @@ ipRec nodeList[100];
 
 
 #endif /* P4_H_ */
-
