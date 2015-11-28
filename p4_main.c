@@ -37,7 +37,7 @@ int send_ok(int node_idx){
 
 	int temp = bind(cliSock, (struct sockaddr*) &nodeClientAddr, sizeof(nodeClientAddr));
 	sprintf(print_buf,"bind : %d\n", temp);
-	debug(print_buf);
+	//debug(print_buf);
 	if ( temp < 0){
 		error("Error encountered while binding socket to server address");
 		res = -1;
@@ -53,7 +53,7 @@ int send_ok(int node_idx){
 	nodeServAddr.sin_port = htons(nodeList[node_idx].port);
 
 	//Send 'OK' message
-	printf("Sending OK to %s, port:%d\n",nodeList[node_idx].ip, nodeList[node_idx].port);
+	//printf("Sending OK to %s, port:%d\n",nodeList[node_idx].ip, nodeList[node_idx].port);
 	char msg[10];
 	socklen_t nodeServLen = sizeof(nodeServAddr);
 	bzero(msg, 10);
@@ -61,7 +61,7 @@ int send_ok(int node_idx){
 	
 	res = sendto(cliSock, msg, strlen(msg), 0, (struct sockaddr *)&nodeServAddr, sizeof(nodeServAddr));
 	
-	printf("sendto ret:%d %s \n", res, inet_ntoa(nodeServAddr.sin_addr));
+	//printf("sendto ret:%d %s \n", res, inet_ntoa(nodeServAddr.sin_addr));
 	if(-1 == res){error("Error sending OK");}
 
 /*	//Wait for node server echo
@@ -71,7 +71,7 @@ int send_ok(int node_idx){
 
 	//close socket
 	close(cliSock);
-	printf("send_ok: Returning\n");
+	//printf("send_ok: Returning\n");
 }
 
 int send_list(int node_idx){
@@ -89,7 +89,7 @@ int send_list(int node_idx){
 
 	int temp = bind(cliSock, (struct sockaddr*) &nodeClientAddr, sizeof(nodeClientAddr));
 	sprintf(print_buf,"send_list:bind : %d\n", temp);
-	debug(print_buf);
+	//debug(print_buf);
 	if ( temp < 0){
 		error("Error encountered while binding socket to server address");
 		res = -1;
@@ -104,46 +104,19 @@ int send_list(int node_idx){
 	inet_aton(nodeList[node_idx].ip, &(nodeServAddr.sin_addr));
 	nodeServAddr.sin_port = htons(nodeList[node_idx].port);
 
-	//Connect to the node's UDP server
-	//if(connect(cliSock, (struct sockaddr*) &nodeServAddr, sizeof(nodeServAddr)) < 0){ res = -1;}
-
-	//Send local nbrs list
-	//res = sendto(cliSock, msg, strlen(msg), 0, &nodeServAddr, sizeof(nodeServAddr));
-
-/*	char msg[10];
-	socklen_t nodeServLen = sizeof(nodeServAddr);
-	bzero(msg, 10);
-	sprintf(msg, "OK");
-
-	res = sendto(cliSock, msg, strlen(msg), 0, (struct sockaddr *)&nodeServAddr, sizeof(nodeServAddr));
-
-	printf("sendto ret:%d %s \n", res, inet_ntoa(nodeServAddr.sin_addr));
-	if(-1 == res){error("Error sending OK");}*/
-
-	//pthread_mutex_lock(&nodeHBTableMutex);
 	uint32_t sendListNet[100][2], i=0;
 	pthread_mutex_lock(&nodeHBTableMutex);
 	for(i=0; i<N; i++){
 		printf("Sending:HB:%d, TS: %d\n",nodeHBTable[i][0],nodeHBTable[i][1]);
 		sendListNet[i][0] = htonl(nodeHBTable[i][0]);
 		sendListNet[i][1] = htonl(nodeHBTable[i][1]);
-		printf("htonl:HB:%d, TS: %d\n",sendListNet[i][0],sendListNet[i][1]);
+		//printf("htonl:HB:%d, TS: %d\n",sendListNet[i][0],sendListNet[i][1]);
 	}
 	pthread_mutex_unlock(&nodeHBTableMutex);
 	res = sendto(cliSock, sendListNet, sizeof(sendListNet), 0, (struct sockaddr *)&nodeServAddr, sizeof(nodeServAddr));
-	//pthread_mutex_unlock(&nodeHBTableMutex);
 
-	printf("sendto ret:%d %s \n", res, inet_ntoa(nodeServAddr.sin_addr));
+	//printf("sendto ret:%d %s \n", res, inet_ntoa(nodeServAddr.sin_addr));
 	if(-1 == res){error("Error sending nbr list");}
-
-/*	//Wait for node server echo
-	char msg[10];
-	socklen_t nodeServLen = sizeof(nodeServAddr);
-	bzero(msg, 10);
-
-	res = recvfrom(cliSock, msg, sizeof(msg), 0, (struct sockaddr *)&nodeServAddr, &nodeServLen);
-	printf("recvfrom ret:%d\n", res);
-	if(-1 == res){error("Error receiving OK");}*/
 
 	//close socket
 	close(cliSock);
@@ -205,6 +178,7 @@ void check_failures(){
 		int lastHbTs =  nodeHBTable[i][1];
 		pthread_mutex_unlock(&nodeHBTableMutex);
 		if(F < (ltime - lastHbTs)){
+			printf("Failing node:%d\n",i);
 			//Set the failed flag for ith node
 			failedNodes[i] = 1;
 			failedNodesCtr++;
@@ -236,7 +210,7 @@ int main(int argc, char *argv[]){
 	while(!sendOk &&  !rcvdOk);
 
 	if(sendOk){//If sendOk, send 'OK' to all other nodes
-		printf("sendOk is set\n");
+		//printf("sendOk is set\n");
 		//Loop through the nodeList, send 'OK' to each node
 		//except myself
 		int node_idx = 0;
@@ -245,7 +219,7 @@ int main(int argc, char *argv[]){
 		}
 	}
 	else{//If rcvdOk, read endpoints file
-		printf("rcvdOk is set\n");
+		//printf("rcvdOk is set\n");
 		//Read IP records from 'endpoints' file
 		read_IP_recs();
 	}
@@ -324,24 +298,29 @@ int main(int argc, char *argv[]){
 		check_failures();
 	}
 
-	//Stop the server thread
-	//stopFlag = 1;
-	//Print the results of HB table
+	//Wait for server thread to finish any updates
+	//pthread_join(servThread, NULL);
+	sleep(5);
+
+	//Print the results of HB table into file 'listX'
+	char fileName[20];
+	sprintf(fileName, "list%d",myIdx);
+	FILE *out = fopen(fileName, "w");
 	if(!failFlag)
-		printf("OK\n");
+		fprintf(out, "OK\n");
 	else
-		printf("FAIL\n");
+		fprintf(out, "FAIL\n");
 	pthread_mutex_lock(&nodeHBTableMutex);
 	for(i=0; i<N; i++){
 		if(failedNodes[i])
-			printf("Idx:%d,HB:%d,TS:%d,FAIL\n",i,nodeHBTable[i][0],
+			fprintf(out, "Idx:%d,HB:%d,TS:%d,FAIL\n",i,nodeHBTable[i][0],
 					nodeHBTable[i][1]);
 		else
-			printf("Idx:%d,HB:%d,TS:%d,OK\n",i,nodeHBTable[i][0],
+			fprintf(out, "Idx:%d,HB:%d,TS:%d,OK\n",i,nodeHBTable[i][0],
 								nodeHBTable[i][1]);
 	}
 	pthread_mutex_unlock(&nodeHBTableMutex);
 
-	//pthread_join(servThread, NULL);
+	//Exit
 	printf("Done\n");
 }
