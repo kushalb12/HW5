@@ -112,7 +112,7 @@ int get_index() {
 	printf("ftell:%d\n", ftell(endpts));
 	if (0 == ftell(endpts)) {
 		idx = 0;
-		printf("idx is zero\n");
+		printf("get_index: empty file, starting idx:0\n");
 	} else {
 		fseek(endpts, -(sizeof(ipRec)), SEEK_END);
 		printf("pos:%d\n", ftell(endpts));
@@ -131,7 +131,7 @@ void append_ip_rec(){
 
 	//Get an exclusive lock on the file
 	int res = 0;
-	ipRec myRec;
+	ipRec myIPRec;
 	endpts = fopen("endpoints", "a+");
 	if(NULL == endpts){
 		res = -1;
@@ -146,12 +146,12 @@ void append_ip_rec(){
 	fflush(stdout);
 	//Append new ip record
 	myIdx = get_index();
-	myRec.idx = myIdx;
-	strcpy(myRec.ip, myIP);
-	myRec.port = myPort;
+	myIPRec.idx = myIdx;
+	strcpy(myIPRec.ip, myIP);
+	myIPRec.port = myPort;
 
-	printf("myRec:%d, %s, %d\n", myRec.idx, myRec.ip, myRec.port);
-	fwrite(&myRec, sizeof(ipRec), 1, endpts);
+	printf("myRec:%d, %s, %d\n", myIPRec.idx, myIPRec.ip, myIPRec.port);
+	fwrite(&myIPRec, sizeof(ipRec), 1, endpts);
 
 	//Release the lock
 	flock(endptsLock, LOCK_UN);
@@ -169,7 +169,7 @@ int file_exists(char *file){
 void read_IP_recs(){
 	endpts = fopen("endpoints", "r");
 	if(NULL == endpts){
-		error("File creation failed");
+		error("read_IP_recs: fopen failed");
 	}
 
 	//Get an advisory shared lock on file
@@ -177,16 +177,21 @@ void read_IP_recs(){
 		usleep(1000);
 	}
 
-	//Read all the IP records one by one
+	//Read 'N' IP records one by one except current node
 	ipRec temp;
 	int ctr=0;
 	while(NULL != endpts && (ctr < N)){
 		fread(&temp, sizeof(temp), 1, endpts);
 		printf("temp:%d, %s, %d\n", temp.idx, temp.ip, temp.port);
 		if(ctr != myIdx){ //Skip my own IP record
-			nodeList[ctr] = temp;
+			nodeList[ctr] = temp; //Store in nodeList array
 		}
 		ctr++;
+	}
+
+	if(N != ctr){
+		sprintf(print_buf,"read_IP_recs:ctr=%d\n", ctr);
+		debug(print_buf);
 	}
 
 	//Release the lock
@@ -195,29 +200,29 @@ void read_IP_recs(){
 	fclose(endpts);
 }
 
-void update_list(int recvListLen, int recvList[][recvListLen]){
-	int i = 0, res = 0;
+void update_list(uint32_t recvList[N][2]){
+	int i = 0, res = 0, nodeHBCtr=0;
 	if(failFlag) {return;} //No updates if current node is failed
-	for(i=0; i<recvListLen; i++){
-		if(myIdx == recvList[i][0]) continue; //skip current node
-		res = insert_nbr_in_list(sendList, sendListLen, recvList[i][0],recvList[i][1]);
-		if(1 == res) sendListLen++;
+	for(i=0; i<N; i++){
+		if(myIdx == i) continue; //skip current node
+		nodeHBCtr = recvList[i][1];
+		pthread_mutex_lock(&nodeHBTableMutex);
+		if(nodeHBTable[i][0] < nodeHBCtr){
+			printf("update_list: Updating node:%d\n",i);
+			printf("update_list: old HBCtr:%d\n",nodeHBTable[i][0]);
+			nodeHBTable[i][0] = nodeHBCtr;
+			printf("update_list: new HBCtr:%d\n",nodeHBTable[i][0]);
+			//Update timestamp
+			nodeHBTable[i][1] = ltime;
+		}
+		pthread_mutex_unlock(&nodeHBTableMutex);
 	}
 }
 
-int insert_nbr_in_list(int list[][2], int len, int item, int ts){
+int update_nodeHBTable(int nodeIdx, int hbCtr){
 	//start from the beginning of array, insert if not there or greater timestamp
 	int i=0;
-	while(i<len){
-		if(list[i][0] == item)
-			if(list[i][1] >= ts) //already exists
-				{return 0;}
-			else
-				{list[i][1] = ts; return 1;}
-		i++;
-	}
-	list[len][0] = item; //Insert at the end
-	list[len][1] = ts;
+
 	return 1;
 }
 
@@ -242,7 +247,7 @@ void* server_thread(void * arg){
 	append_ip_rec();
 
 	//See if I am the last process,
-	//If yes, read N-1 lines from endpoints file, set sendOk flag
+	//If yes, read first 'N-1' lines from endpoints file, set sendOk flag
 	if(N-1 == myIdx){
 		//I am the last process, read N-1 IP records from 'endpoints' file
 		read_IP_recs();
@@ -262,7 +267,14 @@ void* server_thread(void * arg){
 			res = recvfrom(servSock, buf, BUFSIZE, 0, (struct sockaddr *) &clAddr, &clientLen);
 			sprintf(print_buf, "res: %d\n", res);
 			debug(print_buf);
-			//send echo
+			if( 0 == strcmp("OK", buf)){
+				sprintf(print_buf, "Received OK message from %s\n",inet_ntoa(clAddr.sin_addr));
+				debug(print_buf);
+				//Set rcvdOK flag
+				rcvdOk = 1;
+				break;
+			}
+/*			//send echo (only for debugging)
 			res = sendto(servSock, buf, res, 0, (struct sockaddr *)&clAddr, clientLen);
 			sprintf(print_buf, "sendto ret:%d\n", res);
 			debug(print_buf);
@@ -271,39 +283,39 @@ void* server_thread(void * arg){
 			if(0 != buf[res])
 				buf[res] = 0;
 			sprintf(print_buf, "Received:%s from %s, port:%d \n", buf, inet_ntoa(clAddr.sin_addr), clAddr.sin_port);
-			debug(print_buf);
-			if( 0 == strcmp("OK", buf)){
-				sprintf(print_buf, "Received OK message from %s\n",inet_ntoa(clAddr.sin_addr));
-				debug(print_buf);
-				//Set rcvdOK flag
-				rcvdOk = 1;
-				break;
-			}
+			debug(print_buf);*/
 		}
 	}
 
-	int recvList[100][2];
+	uint32_t recvHBTable[100][2];
+	char buf[10];
 	struct sockaddr_in clAddr;
 	socklen_t clientLen = sizeof(clAddr);
 	//TODO:Listen for heart beat messages and update neighbor list
-	while(!stopFlag){
-		bzero(recvList, sizeof(recvList));
-		res = recvfrom(servSock, recvList, sizeof(recvList), 0, (struct sockaddr *) &clAddr, &clientLen);
+	while(ltime <T){
+		bzero(recvHBTable, sizeof(recvHBTable));
+/*		res = recvfrom(servSock, buf, sizeof(buf), 0, (struct sockaddr *) &clAddr, &clientLen);
+		sprintf(print_buf, "res: %d\n", res);
+		debug(print_buf);*/
+
+		//Wait to receive the next heart beat
+
+		res = recvfrom(servSock, recvHBTable, sizeof(recvHBTable), 0, (struct sockaddr *) &clAddr, &clientLen);
 		sprintf(print_buf, "res: %d\n", res);
 		debug(print_buf);
 
-		int i=0;
-		for(i=0; i<100; i++){
-			recvList[i][0] = ntohl(recvList[i][0]);
-			recvList[i][1] = ntohl(recvList[i][1]);
-			if(0 == recvList[i][0])
-				break;
-		}
 
+		int i=0;
+		for(i=0; i<N; i++){
+			printf("Received:HB:%d, TS: %d\n",recvHBTable[i][0],recvHBTable[i][1]);
+			recvHBTable[i][0] = ntohl(recvHBTable[i][0]);
+			recvHBTable[i][1] = ntohl(recvHBTable[i][1]);
+			printf("ntohl:HB:%d, TS: %d\n",recvHBTable[i][0],recvHBTable[i][1]);
+			//if(0 == recvHBTable[i][0])
+			//	break;
+		}
 		//Update the neighbor list
-		pthread_mutex_lock(&sendListMutex);
-		update_list(i-1, recvList);
-		pthread_mutex_unlock(&sendListMutex);
+		update_list(recvHBTable);
 	}
 
 	//close the socket
