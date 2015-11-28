@@ -186,6 +186,15 @@ void check_failures(){
 	}
 }
 
+void update_myHB() {
+	if(failFlag) return; //do nothing if current node is failed
+	//Update heartbeat counter for current node
+	HBCtr++;
+	pthread_mutex_lock(&nodeHBTableMutex);
+	nodeHBTable[myIdx][0] = HBCtr;
+	nodeHBTable[myIdx][1] = ltime;
+	pthread_mutex_unlock(&nodeHBTableMutex);
+}
 
 int main(int argc, char *argv[]){
 	//N=2, b=1, c=5, F=2, B=1, P=5, S=100, T=5;
@@ -209,8 +218,7 @@ int main(int argc, char *argv[]){
 	//Wait for either of sendOk/rcvdOk to be set
 	while(!sendOk &&  !rcvdOk);
 
-	if(sendOk){//If sendOk, send 'OK' to all other nodes
-		//printf("sendOk is set\n");
+	if(sendOk){
 		//Loop through the nodeList, send 'OK' to each node
 		//except myself
 		int node_idx = 0;
@@ -219,7 +227,6 @@ int main(int argc, char *argv[]){
 		}
 	}
 	else{//If rcvdOk, read endpoints file
-		//printf("rcvdOk is set\n");
 		//Read IP records from 'endpoints' file
 		read_IP_recs();
 	}
@@ -256,11 +263,7 @@ int main(int argc, char *argv[]){
 			//Increment local time
 			ltime++;
 			//Update heartbeat counter for current node
-			HBCtr++;
-			pthread_mutex_lock(&nodeHBTableMutex);
-			nodeHBTable[myIdx][0] = HBCtr;
-			nodeHBTable[myIdx][1] = ltime;
-			pthread_mutex_unlock(&nodeHBTableMutex);
+			update_myHB();
 			//Select new neighbors for next round
 			select_nbrs(b);
 		}
@@ -313,11 +316,9 @@ int main(int argc, char *argv[]){
 	pthread_mutex_lock(&nodeHBTableMutex);
 	for(i=0; i<N; i++){
 		if(failedNodes[i])
-			fprintf(out, "Idx:%d,HB:%d,TS:%d,FAIL\n",i,nodeHBTable[i][0],
-					nodeHBTable[i][1]);
+			fprintf(out, "%d %d,FAIL\n",i,nodeHBTable[i][0]);
 		else
-			fprintf(out, "Idx:%d,HB:%d,TS:%d,OK\n",i,nodeHBTable[i][0],
-								nodeHBTable[i][1]);
+			fprintf(out, "%d %d,OK\n",i,nodeHBTable[i][0]);
 	}
 	pthread_mutex_unlock(&nodeHBTableMutex);
 
