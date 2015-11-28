@@ -23,6 +23,8 @@
 
 #define BUFSIZE 1024
 
+uint32_t recvHBTable[100][2]={0};
+
 void debug(char *s){
 	write(1, s, strlen(s));
 	fflush(stdout);
@@ -86,7 +88,7 @@ int create_server() {
 	//Bind the server
 	int temp = bind(servSock, (struct sockaddr*) &servAddr, sizeof(servAddr));
 	sprintf(print_buf,"%d\n", temp);
-	debug(print_buf);
+	//debug(print_buf);
 	if ( temp < 0){
 		error("Error encountered while binding socket to server address");
 		res = -1;
@@ -109,15 +111,15 @@ int get_index() {
 	//Go to the end of file
 	fseek(endpts, 0, SEEK_END);
 	//Get the index for this ip record
-	printf("ftell:%d\n", ftell(endpts));
+	//printf("ftell:%d\n", ftell(endpts));
 	if (0 == ftell(endpts)) {
 		idx = 0;
-		printf("get_index: empty file, starting idx:0\n");
+		//printf("get_index: empty file, starting idx:0\n");
 	} else {
 		fseek(endpts, -(sizeof(ipRec)), SEEK_END);
-		printf("pos:%d\n", ftell(endpts));
+		//printf("pos:%d\n", ftell(endpts));
 		fread(&lastRec, sizeof(lastRec), 1, endpts);
-		printf("lastRec:%d, %s, %d\n", lastRec.idx, lastRec.ip, lastRec.port);
+		//printf("lastRec:%d, %s, %d\n", lastRec.idx, lastRec.ip, lastRec.port);
 		idx = lastRec.idx + 1;
 	}
 
@@ -142,7 +144,7 @@ void append_ip_rec(){
 		usleep(1000);
 	}
 
-	printf("Got the lock\n");
+	//printf("Got the lock\n");
 	fflush(stdout);
 	//Append new ip record
 	myIdx = get_index();
@@ -182,7 +184,7 @@ void read_IP_recs(){
 	int ctr=0;
 	while(NULL != endpts && (ctr < N)){
 		fread(&temp, sizeof(temp), 1, endpts);
-		printf("temp:%d, %s, %d\n", temp.idx, temp.ip, temp.port);
+		//printf("temp:%d, %s, %d\n", temp.idx, temp.ip, temp.port);
 		if(ctr != myIdx){ //Skip my own IP record
 			nodeList[ctr] = temp; //Store in nodeList array
 		}
@@ -200,18 +202,18 @@ void read_IP_recs(){
 	fclose(endpts);
 }
 
-void update_list(uint32_t recvList[N][2]){
+void update_hb_table(){
 	int i = 0, res = 0, nodeHBCtr=0;
 	if(failFlag) {return;} //No updates if current node is failed
 	for(i=0; i<N; i++){
 		if(myIdx == i) continue; //skip current node
-		nodeHBCtr = recvList[i][1];
+		nodeHBCtr = recvHBTable[i][0];
 		pthread_mutex_lock(&nodeHBTableMutex);
 		if(nodeHBTable[i][0] < nodeHBCtr){
 			printf("update_list: Updating node:%d\n",i);
-			printf("update_list: old HBCtr:%d\n",nodeHBTable[i][0]);
+			//printf("update_list: old HBCtr:%d\n",nodeHBTable[i][0]);
 			nodeHBTable[i][0] = nodeHBCtr;
-			printf("update_list: new HBCtr:%d\n",nodeHBTable[i][0]);
+			//printf("update_list: new HBCtr:%d\n",nodeHBTable[i][0]);
 			//Update timestamp
 			nodeHBTable[i][1] = ltime;
 		}
@@ -219,12 +221,6 @@ void update_list(uint32_t recvList[N][2]){
 	}
 }
 
-int update_nodeHBTable(int nodeIdx, int hbCtr){
-	//start from the beginning of array, insert if not there or greater timestamp
-	int i=0;
-
-	return 1;
-}
 
 //Server Thread
 void* server_thread(void * arg){
@@ -266,56 +262,39 @@ void* server_thread(void * arg){
 
 			res = recvfrom(servSock, buf, BUFSIZE, 0, (struct sockaddr *) &clAddr, &clientLen);
 			sprintf(print_buf, "res: %d\n", res);
-			debug(print_buf);
+			//debug(print_buf);
 			if( 0 == strcmp("OK", buf)){
 				sprintf(print_buf, "Received OK message from %s\n",inet_ntoa(clAddr.sin_addr));
-				debug(print_buf);
+				//debug(print_buf);
 				//Set rcvdOK flag
 				rcvdOk = 1;
 				break;
 			}
-/*			//send echo (only for debugging)
-			res = sendto(servSock, buf, res, 0, (struct sockaddr *)&clAddr, clientLen);
-			sprintf(print_buf, "sendto ret:%d\n", res);
-			debug(print_buf);
-			if(-1 == res){error("Error sending OK");}
-			//Check for null terminator in the message
-			if(0 != buf[res])
-				buf[res] = 0;
-			sprintf(print_buf, "Received:%s from %s, port:%d \n", buf, inet_ntoa(clAddr.sin_addr), clAddr.sin_port);
-			debug(print_buf);*/
 		}
 	}
 
-	uint32_t recvHBTable[100][2];
+	//uint32_t recvHBTable[100][2];
 	char buf[10];
 	struct sockaddr_in clAddr;
 	socklen_t clientLen = sizeof(clAddr);
 	//TODO:Listen for heart beat messages and update neighbor list
-	while(ltime <T){
+	while(1){
 		bzero(recvHBTable, sizeof(recvHBTable));
-/*		res = recvfrom(servSock, buf, sizeof(buf), 0, (struct sockaddr *) &clAddr, &clientLen);
-		sprintf(print_buf, "res: %d\n", res);
-		debug(print_buf);*/
 
 		//Wait to receive the next heart beat
-
 		res = recvfrom(servSock, recvHBTable, sizeof(recvHBTable), 0, (struct sockaddr *) &clAddr, &clientLen);
 		sprintf(print_buf, "res: %d\n", res);
-		debug(print_buf);
-
+		//debug(print_buf);
 
 		int i=0;
 		for(i=0; i<N; i++){
-			printf("Received:HB:%d, TS: %d\n",recvHBTable[i][0],recvHBTable[i][1]);
+			//printf("Received:HB:%d, TS: %d\n",recvHBTable[i][0],recvHBTable[i][1]);
 			recvHBTable[i][0] = ntohl(recvHBTable[i][0]);
 			recvHBTable[i][1] = ntohl(recvHBTable[i][1]);
-			printf("ntohl:HB:%d, TS: %d\n",recvHBTable[i][0],recvHBTable[i][1]);
-			//if(0 == recvHBTable[i][0])
-			//	break;
+			printf("Received:ntohl:HB:%d, TS: %d\n",recvHBTable[i][0],recvHBTable[i][1]);
 		}
 		//Update the neighbor list
-		update_list(recvHBTable);
+		update_hb_table();
 	}
 
 	//close the socket
