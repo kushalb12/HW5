@@ -1,5 +1,5 @@
 /*
- * p3.c
+ * p4_main.c
  *
  *  Created on: 17-Nov-2015
  *      Author: Kushal
@@ -18,9 +18,11 @@
 #include <sys/unistd.h>
 #include <netdb.h>
 
-N=3, b=1, c=3, F=2, B=1, P=2, S=1;
-sendOk=0, rcvdOk=0, ltime=0, seed=0, failFlag=0, stopFlag=0;
-local_nbrs[100][2]={0}, sendList[100][2]={0};
+//N=2, b=1, c=5, F=2, B=1, P=5, S=100, T=5;
+sendOk=0, rcvdOk=0, ltime=0, failFlag=0, stopFlag=0;
+localNbrs[100]={-1}, failedNodes[100]={0}, trueFailedNodes[100]={0};// nodeHBTable[100][2]={0};
+localNbrsLen=0, nodeHBTableLen=0, failedNodesCtr=0, HBCtr=0;
+int nbrSeed, trueFailedNodesCtr=0;
 
 int send_ok(int node_idx){
 
@@ -50,9 +52,6 @@ int send_ok(int node_idx){
 	inet_aton(nodeList[node_idx].ip, &(nodeServAddr.sin_addr));
 	nodeServAddr.sin_port = htons(nodeList[node_idx].port);
 
-	//Connect to the node's UDP server
-	//if(connect(cliSock, (struct sockaddr*) &nodeServAddr, sizeof(nodeServAddr)) < 0){ res = -1;}
-
 	//Send 'OK' message
 	printf("Sending OK to %s, port:%d\n",nodeList[node_idx].ip, nodeList[node_idx].port);
 	char msg[10];
@@ -65,14 +64,14 @@ int send_ok(int node_idx){
 	printf("sendto ret:%d %s \n", res, inet_ntoa(nodeServAddr.sin_addr));
 	if(-1 == res){error("Error sending OK");}
 
-	//Wait for node server echo
+/*	//Wait for node server echo
 	res = recvfrom(cliSock, msg, sizeof(msg), 0, (struct sockaddr *)&nodeServAddr, &nodeServLen);
 	printf("recvfrom ret:%d\n", res);
-	if(-1 == res){error("Error receiving OK");}
+	if(-1 == res){error("Error receiving OK");}*/
 
 	//close socket
 	close(cliSock);
-	printf("send_ok: Returning");
+	printf("send_ok: Returning\n");
 }
 
 int send_list(int node_idx){
@@ -85,6 +84,8 @@ int send_list(int node_idx){
 	nodeClientAddr.sin_family = AF_INET;
 	inet_aton(myIP, &(nodeClientAddr.sin_addr));
 	nodeClientAddr.sin_port = 0;
+	//Don't send heartbeat if current node is dead
+	if(failFlag) return 0;
 
 	int temp = bind(cliSock, (struct sockaddr*) &nodeClientAddr, sizeof(nodeClientAddr));
 	sprintf(print_buf,"send_list:bind : %d\n", temp);
@@ -108,59 +109,124 @@ int send_list(int node_idx){
 
 	//Send local nbrs list
 	//res = sendto(cliSock, msg, strlen(msg), 0, &nodeServAddr, sizeof(nodeServAddr));
-	pthread_mutex_lock(&sendListMutex);
-	int sendListNet[100][2], i=0;
-	for(i=0; i<localNbrsLen; i++){
-		sendListNet[i][0] = htonl(sendList[i][0]);
-		sendListNet[i][1] = htonl(sendList[i][1]);
+
+/*	char msg[10];
+	socklen_t nodeServLen = sizeof(nodeServAddr);
+	bzero(msg, 10);
+	sprintf(msg, "OK");
+
+	res = sendto(cliSock, msg, strlen(msg), 0, (struct sockaddr *)&nodeServAddr, sizeof(nodeServAddr));
+
+	printf("sendto ret:%d %s \n", res, inet_ntoa(nodeServAddr.sin_addr));
+	if(-1 == res){error("Error sending OK");}*/
+
+	//pthread_mutex_lock(&nodeHBTableMutex);
+	uint32_t sendListNet[100][2], i=0;
+	pthread_mutex_lock(&nodeHBTableMutex);
+	for(i=0; i<N; i++){
+		printf("Sending:HB:%d, TS: %d\n",nodeHBTable[i][0],nodeHBTable[i][1]);
+		sendListNet[i][0] = htonl(nodeHBTable[i][0]);
+		sendListNet[i][1] = htonl(nodeHBTable[i][1]);
+		printf("htonl:HB:%d, TS: %d\n",sendListNet[i][0],sendListNet[i][1]);
 	}
+	pthread_mutex_unlock(&nodeHBTableMutex);
 	res = sendto(cliSock, sendListNet, sizeof(sendListNet), 0, (struct sockaddr *)&nodeServAddr, sizeof(nodeServAddr));
-	pthread_mutex_unlock(&sendListMutex);
+	//pthread_mutex_unlock(&nodeHBTableMutex);
 
 	printf("sendto ret:%d %s \n", res, inet_ntoa(nodeServAddr.sin_addr));
 	if(-1 == res){error("Error sending nbr list");}
 
-	//Wait for node server echo
+/*	//Wait for node server echo
 	char msg[10];
 	socklen_t nodeServLen = sizeof(nodeServAddr);
 	bzero(msg, 10);
 
 	res = recvfrom(cliSock, msg, sizeof(msg), 0, (struct sockaddr *)&nodeServAddr, &nodeServLen);
 	printf("recvfrom ret:%d\n", res);
-	if(-1 == res){error("Error receiving OK");}
+	if(-1 == res){error("Error receiving OK");}*/
 
 	//close socket
 	close(cliSock);
 }
 
-//Traverse the node list to select b different neighbors randomly
-//for predetermined nbr list
-void select_nbrs(int b){
+int search_list(int *list, int len, int item){
+	int ctr = 0;
+	for(ctr=0; ctr<len; ctr++){
+		if(item == list[ctr]) return 1;
+	}
+	return 0;
+}
+
+//Traverse the node list to select 'nbrNum' different neighbors randomly
+//Exclude current node and dead nodes
+void select_nbrs(int nbrNum){
 	int ctr = 0, nbrIdx=0, res = 0;
 	long randNum=0;
-	while(ctr <N && localNbrsLen<b ){
-		//Generate next random number
-		randNum = random()%N;
-		if(myIdx == randNum) continue; //skip current node
-		res = insert_nbr_in_list(local_nbrs, localNbrsLen, randNum, ltime);
-		if(1 == res) localNbrsLen++;
-		ctr++;
+
+	//Return if current node is dead
+	if(failFlag) return;
+	//Error check
+	if(nbrNum >= N){
+		printf("Error:[select_nbrs]nbrNum should be <N");
+		return;
+	}
+	//Reset length of localNbrs
+	localNbrsLen=0;
+	int loopTerm = nbrNum;
+	//Exclude the number of dead nodes and current node
+	if(N-failedNodesCtr-1 < nbrNum)
+		loopTerm = N-failedNodesCtr;
+	//Set the seed for random generator
+	srand(nbrSeed);
+	while(localNbrsLen< loopTerm){
+		//randNum = random()%N;//Generate next random number
+		randNum = rand_r(&nbrSeed)%N;//Generate next random number
+		sprintf(print_buf, "randNum:%d\n", randNum);
+		debug(print_buf);
+		if(myIdx == randNum) continue;//skip current node
+		if(failedNodes[randNum]) continue; //skip failed node
+		res = search_list(localNbrs, localNbrsLen, randNum);
+		if(!res) {//new neighbor
+			localNbrs[localNbrsLen] = randNum;
+			localNbrsLen++;
+		}
 	}
 }
 
+//If any nodes have not sent heartbeat in last F seconds
+//Mark them as failed/dead
 void check_failures(){
-
+	if(failFlag) return; //do nothing if current node is failed
+	int i=0, res=0;
+	for(i=0; i<N; i++){
+		if(failedNodes[i]) continue; //skip dead nodes
+		//If 'F' secs passed since last heart beat's timestamp
+		pthread_mutex_lock(&nodeHBTableMutex);
+		int lastHbTs =  nodeHBTable[i][1];
+		pthread_mutex_unlock(&nodeHBTableMutex);
+		if(F < (ltime - lastHbTs)){
+			//Set the failed flag for ith node
+			failedNodes[i] = 1;
+			failedNodesCtr++;
+		}
+	}
 }
 
 
 int main(int argc, char *argv[]){
+	//N=2, b=1, c=5, F=2, B=1, P=5, S=100, T=5;
+    N = atoi(argv[1]);
+    b = atoi(argv[2]);
+    c = atoi(argv[3]);
+    F = atoi(argv[4]);
+    B = atoi(argv[5]);
+	P = atoi(argv[6]);
+	S = atoi(argv[7]);
+	T = atoi(argv[8]);
+	int res = 0;
 
-/*	N = atoi(argv[1]); 	b = atoi(argv[2]); 	c = atoi(argv[3]); 	F = atoi(argv[4]); 	B = atoi(argv[5]);
-	P = atoi(argv[6]); 	S = atoi(argv[7]);*/
-	int res = 0, i=0;
-
-	//sendList mutex
-	pthread_mutex_init(&sendListMutex, NULL);
+	//Initialize sendList mutex
+	pthread_mutex_init(&nodeHBTableMutex, NULL);
 
 	//Create server thread
 	pthread_t servThread;
@@ -172,6 +238,7 @@ int main(int argc, char *argv[]){
 	if(sendOk){//If sendOk, send 'OK' to all other nodes
 		printf("sendOk is set\n");
 		//Loop through the nodeList, send 'OK' to each node
+		//except myself
 		int node_idx = 0;
 		for(node_idx=0; node_idx<N-1; node_idx++){
 			res = send_ok(node_idx);
@@ -186,51 +253,95 @@ int main(int argc, char *argv[]){
 	//Set local time
 	ltime = 0;
 	//Set the seed
-	seed = S + myIdx;
-	srandom(seed);
+	nbrSeed = S+myIdx;
+	//srandom(seed);
 	//Select 'b' neighbors randomly
 	select_nbrs(b);
-	//Send local_nbrs list to each of local neighbors for 'c' number of times
-	//Initially sendList is same as local_nbrs list
-	pthread_mutex_lock(&sendListMutex);
-	for(i=0; i<localNbrsLen; i++){
-		sendList[i][0] = local_nbrs[i][0]; //Nbr index
-		sendList[i][1] = ltime; //timestamp
+	//Prepare initial nodeHBTable
+	//to send to each of local neighbors for 'c' number of times
+	pthread_mutex_lock(&nodeHBTableMutex);
+	int i=0, j=0;
+	for(i=0; i<N; i++){
+		nodeHBTable[i][0] = 0; //hearbeat counter
+		nodeHBTable[i][1] = ltime; //local time
 	}
-	sendListLen = localNbrsLen;
-	pthread_mutex_unlock(&sendListMutex);
+	HBCtr = 1; //Current node heartbeat counter
+	nodeHBTable[myIdx][0] = HBCtr;
+	pthread_mutex_unlock(&nodeHBTableMutex);
 
-	while(ltime < B*(P+F)){
+	while(ltime < T){
 		//Send the neighbor list 'c' times
-		pthread_mutex_lock(&sendListMutex);
-		while(i<c){
-			int j = 0;
-			while(j < sendListLen){
-				//send list to neighbor with index sendList[j]
-				send_list(sendList[j][0]);
-				j++;
+		for(i=0; i<c; i++){
+			//Send to random 'b' neighbors
+			for(j=0; j< localNbrsLen; j++){
+				//send list to neighbor with index localNbrs[j]
+				send_list(localNbrs[j]);
 			}
-			i++;
+			//Sleep for 1s
+			sleep(1);
+			//Increment local time
+			ltime++;
+			//Update heartbeat counter for current node
+			HBCtr++;
+			pthread_mutex_lock(&nodeHBTableMutex);
+			nodeHBTable[myIdx][0] = HBCtr;
+			nodeHBTable[myIdx][1] = ltime;
+			pthread_mutex_unlock(&nodeHBTableMutex);
+			//Select new neighbors for next round
+			select_nbrs(b);
 		}
-		pthread_mutex_unlock(&sendListMutex);
+		//Print HBTable
+		printf("HBTable at ltime: %d\n",ltime);
+		pthread_mutex_lock(&nodeHBTableMutex);
+		for(i=0; i<N; i++){
+			printf("HB:%d, TS: %d\n", nodeHBTable[i][0],
+					nodeHBTable[i][1]);
+		}
+		pthread_mutex_unlock(&nodeHBTableMutex);
 
-		//Sleep for 1s
-		sleep(1);
-		//Increment local time
-		ltime++;
-		//Check if current node is supposed to be failed
-		if(0 == ltime%P && myIdx == random()%N){
-			failFlag = 1;
-			stopFlag = 1;
-			break;
+		//Continue if current node is marked failed
+		if(failFlag) continue;
+
+		//if(0 == ltime%P && myIdx == random()%N){
+		if(trueFailedNodesCtr < B){
+			int failNode=-1, res =0;
+			if(0 == ltime%P){
+				failNode = rand_r(&S)%N;
+				//Mark as failed if not already dead
+				if(!trueFailedNodes[failNode]){
+					trueFailedNodes[failNode] = 1;
+					trueFailedNodesCtr++; //Overall failed nodes
+				}
+				//Check if current node is supposed to be failed
+				if(myIdx == failNode){
+					failFlag = 1;
+					failedNodes[myIdx] = 1;
+					failedNodesCtr++;
+				}
+			}
 		}
 		//Check for failed neighbors
 		check_failures();
-
 	}
 
+	//Stop the server thread
+	//stopFlag = 1;
+	//Print the results of HB table
+	if(!failFlag)
+		printf("OK\n");
+	else
+		printf("FAIL\n");
+	pthread_mutex_lock(&nodeHBTableMutex);
+	for(i=0; i<N; i++){
+		if(failedNodes[i])
+			printf("Idx:%d,HB:%d,TS:%d,FAIL\n",i,nodeHBTable[i][0],
+					nodeHBTable[i][1]);
+		else
+			printf("Idx:%d,HB:%d,TS:%d,OK\n",i,nodeHBTable[i][0],
+								nodeHBTable[i][1]);
+	}
+	pthread_mutex_unlock(&nodeHBTableMutex);
 
-
-	pthread_join(servThread, NULL);
+	//pthread_join(servThread, NULL);
 	printf("Done\n");
 }
