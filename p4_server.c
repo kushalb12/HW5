@@ -26,8 +26,8 @@
 uint32_t recvHBTable[100][2]={0};
 
 void debug(char *s){
-	write(1, s, strlen(s));
-	fflush(stdout);
+	//write(1, s, strlen(s));
+	//fflush(stdout);
 }
 
 int get_host_IP(){
@@ -50,7 +50,8 @@ int get_host_IP(){
 			continue;
 		else{
 			strcpy(myIP, inet_ntoa(*addr_list[i]));
-			printf("IP Addr:%s\n", myIP);
+			sprintf(print_buf,"IP Addr:%s\n", myIP);
+			debug(print_buf);
 			break;
 		}
 	}
@@ -82,13 +83,12 @@ int create_server() {
 	bzero((char *)&servAddr, sizeof(servAddr));
 	servAddr.sin_family = AF_INET;
 	servAddr.sin_addr.s_addr = INADDR_ANY;
-	// inet_aton(myIP, &(servAddr.sin_addr));
 	servAddr.sin_port = 0;
 
 	//Bind the server
 	int temp = bind(servSock, (struct sockaddr*) &servAddr, sizeof(servAddr));
 	sprintf(print_buf,"%d\n", temp);
-	//debug(print_buf);
+	debug(print_buf);
 	if ( temp < 0){
 		error("Error encountered while binding socket to server address");
 		res = -1;
@@ -99,7 +99,8 @@ int create_server() {
 	socklen_t len = sizeof(sin);
 	getsockname(servSock, (struct sockaddr*) &sin, &len);
 	myPort = (int) ntohs(sin.sin_port);
-	printf("Port no:%d\n", myPort);
+	sprintf(print_buf,"Port no:%d\n", myPort);
+	debug(print_buf);
 
 	return res;
 }
@@ -111,18 +112,15 @@ int get_index() {
 	//Go to the end of file
 	fseek(endpts, 0, SEEK_END);
 	//Get the index for this ip record
-	//printf("ftell:%d\n", ftell(endpts));
 	if (0 == ftell(endpts)) {
 		idx = 0;
-		//printf("get_index: empty file, starting idx:0\n");
+		sprintf(print_buf,"get_index: empty file, starting idx:0\n");
+		debug(print_buf);
 	} else {
 		fseek(endpts, -(sizeof(ipRec)), SEEK_END);
-		//printf("pos:%d\n", ftell(endpts));
 		fread(&lastRec, sizeof(lastRec), 1, endpts);
-		//printf("lastRec:%d, %s, %d\n", lastRec.idx, lastRec.ip, lastRec.port);
 		idx = lastRec.idx + 1;
 	}
-
 	//Move to end again
 	fseek(endpts, 0, SEEK_END);
 	return idx;
@@ -138,23 +136,22 @@ void append_ip_rec(){
 	if(NULL == endpts){
 		res = -1;
 	}
-
 	//Get an advisory exclusive lock on file
 	while(0 != flock(endptsLock, LOCK_EX|LOCK_NB)){
 		usleep(1000);
 	}
+	sprintf(print_buf,"Got the lock\n");
+	debug(print_buf);
 
-	//printf("Got the lock\n");
-	fflush(stdout);
 	//Append new ip record
 	myIdx = get_index();
 	myIPRec.idx = myIdx;
 	strcpy(myIPRec.ip, myIP);
 	myIPRec.port = myPort;
 
-	printf("myRec:%d, %s, %d\n", myIPRec.idx, myIPRec.ip, myIPRec.port);
+	sprintf(print_buf,"myRec:%d, %s, %d\n", myIPRec.idx, myIPRec.ip, myIPRec.port);
+	debug(print_buf);
 	fwrite(&myIPRec, sizeof(ipRec), 1, endpts);
-
 	//Release the lock
 	flock(endptsLock, LOCK_UN);
 	//Close the file
@@ -173,18 +170,15 @@ void read_IP_recs(){
 	if(NULL == endpts){
 		error("read_IP_recs: fopen failed");
 	}
-
 	//Get an advisory shared lock on file
 	while(0 != flock(endptsLock, LOCK_SH|LOCK_NB)){
 		usleep(1000);
 	}
-
 	//Read 'N' IP records one by one except current node
 	ipRec temp;
 	int ctr=0;
 	while(NULL != endpts && (ctr < N)){
 		fread(&temp, sizeof(temp), 1, endpts);
-		//printf("temp:%d, %s, %d\n", temp.idx, temp.ip, temp.port);
 		if(ctr != myIdx){ //Skip my own IP record
 			nodeList[ctr] = temp; //Store in nodeList array
 		}
@@ -195,7 +189,6 @@ void read_IP_recs(){
 		sprintf(print_buf,"read_IP_recs:ctr=%d\n", ctr);
 		debug(print_buf);
 	}
-
 	//Release the lock
 	flock(endptsLock, LOCK_UN);
 	//Close the file
@@ -210,10 +203,13 @@ void update_hb_table(){
 		nodeHBCtr = recvHBTable[i][0];
 		pthread_mutex_lock(&nodeHBTableMutex);
 		if(nodeHBTable[i][0] < nodeHBCtr){
-			printf("update_list: Updating node:%d\n",i);
-			//printf("update_list: old HBCtr:%d\n",nodeHBTable[i][0]);
+			sprintf(print_buf,"update_list: Updating node:%d\n",i);
+			debug(print_buf);
+			sprintf(print_buf,"update_list: old HBCtr:%d\n",nodeHBTable[i][0]);
+			debug(print_buf);
 			nodeHBTable[i][0] = nodeHBCtr;
-			//printf("update_list: new HBCtr:%d\n",nodeHBTable[i][0]);
+			sprintf(print_buf,"update_list: new HBCtr:%d\n",nodeHBTable[i][0]);
+			debug(print_buf);
 			//Update timestamp
 			nodeHBTable[i][1] = ltime;
 		}
@@ -238,7 +234,6 @@ void* server_thread(void * arg){
 		}
 		fclose(endpts);
 	}
-
 	//Append IP and port num to endpoints file
 	append_ip_rec();
 
@@ -262,10 +257,10 @@ void* server_thread(void * arg){
 
 			res = recvfrom(servSock, buf, BUFSIZE, 0, (struct sockaddr *) &clAddr, &clientLen);
 			sprintf(print_buf, "res: %d\n", res);
-			//debug(print_buf);
+			debug(print_buf);
 			if( 0 == strcmp("OK", buf)){
 				sprintf(print_buf, "Received OK message from %s\n",inet_ntoa(clAddr.sin_addr));
-				//debug(print_buf);
+				debug(print_buf);
 				//Set rcvdOK flag
 				rcvdOk = 1;
 				break;
@@ -273,25 +268,27 @@ void* server_thread(void * arg){
 		}
 	}
 
-	//uint32_t recvHBTable[100][2];
 	char buf[10];
 	struct sockaddr_in clAddr;
 	socklen_t clientLen = sizeof(clAddr);
-	//TODO:Listen for heart beat messages and update neighbor list
+
+	//Listen for heart beat messages and update neighbor list
 	while(1){
 		bzero(recvHBTable, sizeof(recvHBTable));
 
 		//Wait to receive the next heart beat
 		res = recvfrom(servSock, recvHBTable, sizeof(recvHBTable), 0, (struct sockaddr *) &clAddr, &clientLen);
 		sprintf(print_buf, "res: %d\n", res);
-		//debug(print_buf);
+		debug(print_buf);
 
 		int i=0;
 		for(i=0; i<N; i++){
-			//printf("Received:HB:%d, TS: %d\n",recvHBTable[i][0],recvHBTable[i][1]);
+			sprintf(print_buf, "Received:HB:%d, TS: %d\n",recvHBTable[i][0],recvHBTable[i][1]);
+			debug(print_buf);
 			recvHBTable[i][0] = ntohl(recvHBTable[i][0]);
 			recvHBTable[i][1] = ntohl(recvHBTable[i][1]);
-			printf("Received:ntohl:HB:%d, TS: %d\n",recvHBTable[i][0],recvHBTable[i][1]);
+			sprintf(print_buf, "Received:ntohl:HB:%d, TS: %d\n",recvHBTable[i][0],recvHBTable[i][1]);
+			debug(print_buf);
 		}
 		//Update the neighbor list
 		update_hb_table();
