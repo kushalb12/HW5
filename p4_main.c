@@ -1,14 +1,21 @@
 /*
- * p4_main.c
- *
- *  Created on: 17-Nov-2015
- *      Author: Kushal
- */
+Single Author info:
+
+kbansal Kushal Bansai
+
+Group info:
+
+dadesai Dhara Desai
+htnguy12 Ha T Nguyen
+kbansal Kushal Bansai
+
+*/
 #include "p4.h"
 
 #include <string.h>
 #include <errno.h>
 #include <unistd.h>
+#include <stdlib.h>
 
 #include <sys/file.h>
 #include <sys/socket.h>
@@ -22,6 +29,8 @@ sendOk=0, rcvdOk=0, ltime=0, failFlag=0, stopFlag=0;
 localNbrs[100]={-1}, failedNodes[100]={0}, trueFailedNodes[100]={0};// nodeHBTable[100][2]={0};
 localNbrsLen=0, nodeHBTableLen=0, failedNodesCtr=0, HBCtr=0;
 int nbrSeed, trueFailedNodesCtr=0;
+char randState[32]; //State for RNG for node failures
+struct random_data randBuf; //State for RNG for node failures
 
 int send_ok(int node_idx){
 
@@ -137,10 +146,14 @@ void select_nbrs(int nbrNum){
 	if(N-failedNodesCtr-1 < nbrNum)
 		loopTerm = N-failedNodesCtr-1;
 	//Set the seed for random generator
-	srand(nbrSeed);
+	char state[32];
+	struct random_data rdata;
+	initstate_r(nbrSeed, state, 32, &rdata);
+	//srand(nbrSeed);
 	while(localNbrsLen< loopTerm){
-		//randNum = random()%N;//Generate next random number
-		randNum = rand_r(&nbrSeed)%N;//Generate next random number
+		//randNum = rand_r(&nbrSeed)%N;//Generate next random number
+		random_r(&rdata, &randNum);
+		randNum = randNum%N;//Generate next random number
 		sprintf(print_buf, "randNum:%d\n", randNum);
 		debug(print_buf);
 		if(myIdx == randNum) continue;//skip current node
@@ -189,7 +202,9 @@ void failNextNode() {
 	int failNode = -1, res = 0;
 	if (0 == ltime % P) { //Wait P secs between failures
 		do {//Randomly find the next node to fail
-			failNode = rand_r(&S) % N;
+			//failNode = rand_r(&S) % N;
+			random_r(&randBuf, &failNode);
+			failNode = failNode%N;//Generate next random number
 		} while (0 != trueFailedNodes[failNode]);
 		//Mark as failed
 		trueFailedNodes[failNode] = 1;
@@ -264,10 +279,12 @@ int main(int argc, char *argv[]){
 
 	//Set local time
 	ltime = 0;
-	//Set the seed
+	//Set the seed for selecting neighbors
 	nbrSeed = S+myIdx;
 	//Select 'b' neighbors randomly
 	select_nbrs(b);
+	//Set the state for RNG for node failures, seed=S
+	initstate_r(S, randState, 32, &randBuf);
 	//Prepare initial nodeHBTable
 	//to send to each of local neighbors for 'c' number of times
 	pthread_mutex_lock(&nodeHBTableMutex);
