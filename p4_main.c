@@ -18,7 +18,6 @@
 #include <sys/unistd.h>
 #include <netdb.h>
 
-//N=2, b=1, c=5, F=2, B=1, P=5, S=100, T=5;
 sendOk=0, rcvdOk=0, ltime=0, failFlag=0, stopFlag=0;
 localNbrs[100]={-1}, failedNodes[100]={0}, trueFailedNodes[100]={0};// nodeHBTable[100][2]={0};
 localNbrsLen=0, nodeHBTableLen=0, failedNodesCtr=0, HBCtr=0;
@@ -37,7 +36,7 @@ int send_ok(int node_idx){
 
 	int temp = bind(cliSock, (struct sockaddr*) &nodeClientAddr, sizeof(nodeClientAddr));
 	sprintf(print_buf,"bind : %d\n", temp);
-	//debug(print_buf);
+	debug(print_buf);
 	if ( temp < 0){
 		error("Error encountered while binding socket to server address");
 		res = -1;
@@ -48,12 +47,10 @@ int send_ok(int node_idx){
 	//Build node's UDP server address structure
 	bzero((char *)&nodeServAddr, sizeof(nodeServAddr));
 	nodeServAddr.sin_family = AF_INET;
-	// nodeServAddr.sin_addr.s_addr = INADDR_ANY;
 	inet_aton(nodeList[node_idx].ip, &(nodeServAddr.sin_addr));
 	nodeServAddr.sin_port = htons(nodeList[node_idx].port);
 
 	//Send 'OK' message
-	//printf("Sending OK to %s, port:%d\n",nodeList[node_idx].ip, nodeList[node_idx].port);
 	char msg[10];
 	socklen_t nodeServLen = sizeof(nodeServAddr);
 	bzero(msg, 10);
@@ -61,17 +58,10 @@ int send_ok(int node_idx){
 	
 	res = sendto(cliSock, msg, strlen(msg), 0, (struct sockaddr *)&nodeServAddr, sizeof(nodeServAddr));
 	
-	//printf("sendto ret:%d %s \n", res, inet_ntoa(nodeServAddr.sin_addr));
 	if(-1 == res){error("Error sending OK");}
-
-/*	//Wait for node server echo
-	res = recvfrom(cliSock, msg, sizeof(msg), 0, (struct sockaddr *)&nodeServAddr, &nodeServLen);
-	printf("recvfrom ret:%d\n", res);
-	if(-1 == res){error("Error receiving OK");}*/
 
 	//close socket
 	close(cliSock);
-	//printf("send_ok: Returning\n");
 }
 
 int send_list(int node_idx){
@@ -89,7 +79,7 @@ int send_list(int node_idx){
 
 	int temp = bind(cliSock, (struct sockaddr*) &nodeClientAddr, sizeof(nodeClientAddr));
 	sprintf(print_buf,"send_list:bind : %d\n", temp);
-	//debug(print_buf);
+	debug(print_buf);
 	if ( temp < 0){
 		error("Error encountered while binding socket to server address");
 		res = -1;
@@ -100,24 +90,21 @@ int send_list(int node_idx){
 	//Build node's UDP server address structure
 	bzero((char *)&nodeServAddr, sizeof(nodeServAddr));
 	nodeServAddr.sin_family = AF_INET;
-	// nodeServAddr.sin_addr.s_addr = INADDR_ANY;
 	inet_aton(nodeList[node_idx].ip, &(nodeServAddr.sin_addr));
 	nodeServAddr.sin_port = htons(nodeList[node_idx].port);
 
 	uint32_t sendListNet[100][2], i=0;
 	pthread_mutex_lock(&nodeHBTableMutex);
 	for(i=0; i<N; i++){
-		printf("Sending:HB:%d, TS: %d\n",nodeHBTable[i][0],nodeHBTable[i][1]);
+		sprintf(print_buf,"Sending:HB:%d, TS: %d\n",nodeHBTable[i][0],nodeHBTable[i][1]);
+		debug(print_buf);
 		sendListNet[i][0] = htonl(nodeHBTable[i][0]);
 		sendListNet[i][1] = htonl(nodeHBTable[i][1]);
-		//printf("htonl:HB:%d, TS: %d\n",sendListNet[i][0],sendListNet[i][1]);
 	}
 	pthread_mutex_unlock(&nodeHBTableMutex);
 	res = sendto(cliSock, sendListNet, sizeof(sendListNet), 0, (struct sockaddr *)&nodeServAddr, sizeof(nodeServAddr));
 
-	//printf("sendto ret:%d %s \n", res, inet_ntoa(nodeServAddr.sin_addr));
 	if(-1 == res){error("Error sending nbr list");}
-
 	//close socket
 	close(cliSock);
 }
@@ -148,7 +135,7 @@ void select_nbrs(int nbrNum){
 	int loopTerm = nbrNum;
 	//Exclude the number of dead nodes and current node
 	if(N-failedNodesCtr-1 < nbrNum)
-		loopTerm = N-failedNodesCtr;
+		loopTerm = N-failedNodesCtr-1;
 	//Set the seed for random generator
 	srand(nbrSeed);
 	while(localNbrsLen< loopTerm){
@@ -178,7 +165,8 @@ void check_failures(){
 		int lastHbTs =  nodeHBTable[i][1];
 		pthread_mutex_unlock(&nodeHBTableMutex);
 		if(F < (ltime - lastHbTs)){
-			printf("Failing node:%d\n",i);
+			sprintf(print_buf, "Failing node:%d\n",i);
+			debug(print_buf);
 			//Set the failed flag for ith node
 			failedNodes[i] = 1;
 			failedNodesCtr++;
@@ -235,7 +223,6 @@ int main(int argc, char *argv[]){
 	ltime = 0;
 	//Set the seed
 	nbrSeed = S+myIdx;
-	//srandom(seed);
 	//Select 'b' neighbors randomly
 	select_nbrs(b);
 	//Prepare initial nodeHBTable
@@ -246,7 +233,7 @@ int main(int argc, char *argv[]){
 		nodeHBTable[i][0] = 0; //hearbeat counter
 		nodeHBTable[i][1] = ltime; //local time
 	}
-	HBCtr = 1; //Current node heartbeat counter
+	HBCtr = 0; //Current node heartbeat counter
 	nodeHBTable[myIdx][0] = HBCtr;
 	pthread_mutex_unlock(&nodeHBTableMutex);
 
@@ -268,11 +255,13 @@ int main(int argc, char *argv[]){
 			select_nbrs(b);
 		}
 		//Print HBTable
-		printf("HBTable at ltime: %d\n",ltime);
+		sprintf(print_buf, "HBTable at ltime: %d\n",ltime);
+		debug(print_buf);
 		pthread_mutex_lock(&nodeHBTableMutex);
 		for(i=0; i<N; i++){
-			printf("HB:%d, TS: %d\n", nodeHBTable[i][0],
+			sprintf(print_buf, "HB:%d, TS: %d\n", nodeHBTable[i][0],
 					nodeHBTable[i][1]);
+			debug(print_buf);
 		}
 		pthread_mutex_unlock(&nodeHBTableMutex);
 
@@ -309,6 +298,7 @@ int main(int argc, char *argv[]){
 	char fileName[20];
 	sprintf(fileName, "list%d",myIdx);
 	FILE *out = fopen(fileName, "w");
+	//Status of current node
 	if(!failFlag)
 		fprintf(out, "OK\n");
 	else
@@ -318,10 +308,13 @@ int main(int argc, char *argv[]){
 		if(failedNodes[i])
 			fprintf(out, "%d %d,FAIL\n",i,nodeHBTable[i][0]);
 		else
-			fprintf(out, "%d %d,OK\n",i,nodeHBTable[i][0]);
+			fprintf(out, "%d %d\n",i,nodeHBTable[i][0]);
 	}
 	pthread_mutex_unlock(&nodeHBTableMutex);
+	//Close file
+	fclose(out);
 
 	//Exit
-	printf("Done\n");
+	sprintf(print_buf, "Done\n");
+	debug(print_buf);
 }
