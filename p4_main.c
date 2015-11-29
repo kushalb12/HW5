@@ -1,7 +1,7 @@
 /*
 Single Author info:
 
-kbansal Kushal Bansai
+kbansal Kushal Bansal
 
 Group info:
 
