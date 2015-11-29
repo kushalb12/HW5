@@ -184,6 +184,49 @@ void update_myHB() {
 	pthread_mutex_unlock(&nodeHBTableMutex);
 }
 
+void failNextNode() {
+	if(failFlag) return; //do nothing if current node is failed
+	int failNode = -1, res = 0;
+	if (0 == ltime % P) { //Wait P secs between failures
+		do {//Randomly find the next node to fail
+			failNode = rand_r(&S) % N;
+		} while (0 != trueFailedNodes[failNode]);
+		//Mark as failed
+		trueFailedNodes[failNode] = 1;
+		trueFailedNodesCtr++; //Globally failed nodes ctr
+		//Check if fail node is current node
+		if (myIdx == failNode) {
+			failFlag = 1;
+			failedNodes[myIdx] = 1;
+			failedNodesCtr++;
+		}
+	}
+}
+
+void output_listX() {
+	//Print the results of HB table into file 'listX'
+	char fileName[20];
+	int i=0;
+	sprintf(fileName, "list%d", myIdx);
+	FILE* out = fopen(fileName, "w");
+	//Status of current node
+	if (!failFlag)
+		fprintf(out, "OK\n");
+	else
+		fprintf(out, "FAIL\n");
+
+	pthread_mutex_lock(&nodeHBTableMutex);
+	for (i = 0; i < N; i++) {
+		if (failedNodes[i])
+			fprintf(out, "%d %d,FAIL\n", i, nodeHBTable[i][0]);
+		else
+			fprintf(out, "%d %d\n", i, nodeHBTable[i][0]);
+	}
+	pthread_mutex_unlock(&nodeHBTableMutex);
+	//Close file
+	fclose(out);
+}
+
 int main(int argc, char *argv[]){
 	//N=2, b=1, c=5, F=2, B=1, P=5, S=100, T=5;
     N = atoi(argv[1]);
@@ -245,75 +288,31 @@ int main(int argc, char *argv[]){
 				//send list to neighbor with index localNbrs[j]
 				send_list(localNbrs[j]);
 			}
-			//Sleep for 1s
-			sleep(1);
-			//Increment local time
-			ltime++;
-			//Update heartbeat counter for current node
-			update_myHB();
-			//Select new neighbors for next round
-			select_nbrs(b);
 		}
-		//Print HBTable
-		sprintf(print_buf, "HBTable at ltime: %d\n",ltime);
-		debug(print_buf);
-		pthread_mutex_lock(&nodeHBTableMutex);
-		for(i=0; i<N; i++){
-			sprintf(print_buf, "HB:%d, TS: %d\n", nodeHBTable[i][0],
-					nodeHBTable[i][1]);
-			debug(print_buf);
+		//Select new neighbors for next round
+		select_nbrs(b);
+		//Sleep for 1s
+		sleep(1);
+		//Increment local time
+		ltime++;
+		//Update heartbeat counter for current node
+		update_myHB();
+		//Fail next node after every P secs
+		//until 'B' nodes are failed
+		if (trueFailedNodesCtr < B) {
+			failNextNode();
 		}
-		pthread_mutex_unlock(&nodeHBTableMutex);
-
-		//Continue if current node is marked failed
-		if(failFlag) continue;
-
-		//if(0 == ltime%P && myIdx == random()%N){
-		if(trueFailedNodesCtr < B){
-			int failNode=-1, res =0;
-			if(0 == ltime%P){
-				failNode = rand_r(&S)%N;
-				//Mark as failed if not already dead
-				if(!trueFailedNodes[failNode]){
-					trueFailedNodes[failNode] = 1;
-					trueFailedNodesCtr++; //Overall failed nodes
-				}
-				//Check if current node is supposed to be failed
-				if(myIdx == failNode){
-					failFlag = 1;
-					failedNodes[myIdx] = 1;
-					failedNodesCtr++;
-				}
-			}
-		}
-		//Check for failed neighbors
+		//Check for dead nodes,
+		//no heart beat received for >F secs
 		check_failures();
 	}
 
 	//Wait for server thread to finish any updates
 	//pthread_join(servThread, NULL);
-	sleep(5);
+	sleep(2);
 
 	//Print the results of HB table into file 'listX'
-	char fileName[20];
-	sprintf(fileName, "list%d",myIdx);
-	FILE *out = fopen(fileName, "w");
-	//Status of current node
-	if(!failFlag)
-		fprintf(out, "OK\n");
-	else
-		fprintf(out, "FAIL\n");
-	pthread_mutex_lock(&nodeHBTableMutex);
-	for(i=0; i<N; i++){
-		if(failedNodes[i])
-			fprintf(out, "%d %d,FAIL\n",i,nodeHBTable[i][0]);
-		else
-			fprintf(out, "%d %d\n",i,nodeHBTable[i][0]);
-	}
-	pthread_mutex_unlock(&nodeHBTableMutex);
-	//Close file
-	fclose(out);
-
+	output_listX();
 	//Exit
 	sprintf(print_buf, "Done\n");
 	debug(print_buf);
