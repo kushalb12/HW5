@@ -59,7 +59,6 @@ int get_host_IP(){
 }
 
 //Create UDP server
-//TODO: Check the return value for fail
 int create_server() {
 
 	int res=0;
