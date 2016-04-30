@@ -1,17 +1,12 @@
-*** Problem
+# Problem
+* Implement a failure detector using a gossip-based heartbeat algorithm of nodes.
+* The program has to contain a server thread that listens for UDP connections and the main thread that sends UDP messages or sleeps as described below. Be careful to protect shared variables that require protection!
 
-Implement a failure detector using a gossip-based heartbeat algorithm of nodes.
-The program has to contain a server thread that listens for UDP connections and the main thread that sends UDP messages or sleeps as described below. Be careful to protect shared variables that require protection!
+### Functionalities
+*Following the process in the problem description
 
-*** Author
-
-Kushal Bansal
-
-*** Functionalities
-
-Following the process in the problem description
-
-*** Compile and run test file
+### Instructions to run
+#### Compile and run test file
 1. Compile the program with Makefile: make clean make
 2. Running test file: ./p5 N b c F B P S T
 	- number of peer nodes N,
@@ -23,13 +18,13 @@ Following the process in the problem description
 	- the seed of the random number generator S,
 	- the total number of seconds to run T.
 
-*** Created files:
+## Created files:
 - p4.h
 - p4_main.c
 - p4_server.c
 - Makefile, README.txt
 
-*** Example
+### Example
 1. Start different shells on same/different m/cs.
 2. Cd to a common directory path. (e.g. /fakepath/users/k/kbansal/h5p4)
 3. Remove any old 'endpoints' file.
