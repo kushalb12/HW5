@@ -4,9 +4,11 @@ Implement a failure detector using a gossip-based heartbeat algorithm of nodes.
 The program has to contain a server thread that listens for UDP connections and the main thread that sends UDP messages or sleeps as described below. Be careful to protect shared variables that require protection!
 
 *** Author
+
 Kushal Bansal
 
 *** Functionalities
+
 Following the process in the problem description
 
 *** Compile and run test file
